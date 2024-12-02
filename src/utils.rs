@@ -27,7 +27,7 @@ fn show_image(title: &str, image: &Mat) -> Result<()> {
     Ok(())
 }
 
-fn crop_stamps(rectangles: &mut Vec<Rect>, image_size: Size) {
+pub fn crop_boxes(rectangles: &mut Vec<Rect>, image_size: Size) {
     for col in 1..=3 {
         for row in 0..3 {
             let mut rect = Rect::new(
@@ -90,6 +90,70 @@ fn crop_stamps(rectangles: &mut Vec<Rect>, image_size: Size) {
             }
         }
     }
+}
+
+pub fn crop_stamps(image: Mat) -> Vec<Mat> {
+    let mut stamps = Vec::new();
+
+    let mut rectangles = Vec::new();
+    let image_size = image.size();
+
+    crop_boxes(&mut rectangles, image_size.unwrap());
+
+
+    for (idx, rect) in rectangles.iter().enumerate() {
+        let stamp_roi = image.roi(*rect).unwrap().clone_pointee();
+
+        let mut gray = Mat::default();
+        cvt_color(&stamp_roi, &mut gray, COLOR_BGR2GRAY, 0).unwrap();
+
+        let thresh = apply_thresholding(&gray, "adaptive_mean", 90.0).unwrap();
+        let processed_thresh = apply_noise_removal(&thresh).unwrap();
+
+        let mut contours = VectorOfVectorOfPoint::new();
+        find_contours(
+            &processed_thresh,
+            &mut contours,
+            RETR_TREE,
+            CHAIN_APPROX_SIMPLE,
+            Point::new(0, 0),
+        ).unwrap();
+
+        let mut image_with_contours = stamp_roi.clone();
+        imgproc::draw_contours(
+            &mut image_with_contours,
+            &contours,
+            -1,
+            Scalar::new(0.0, 255.0, 0.0, 0.0),
+            2,
+            LINE_8,
+            &Mat::default(),
+            0,
+            Point::new(0, 0),
+        ).unwrap();
+
+        let rect = draw_filtered_bounding_rectangle(&contours, &mut image_with_contours).unwrap();
+
+        if let Some(rect) = rect {
+            // Crop the region
+            let cropped_region = stamp_roi.roi(rect).unwrap().clone_pointee();
+
+            let mut resized_region = Mat::default();
+            imgproc::resize(
+                &cropped_region,
+                &mut resized_region,
+                Size::new(300, 70),
+                0.0,
+                0.0,
+                imgproc::INTER_LINEAR,
+            ).unwrap();
+
+            stamps.push(resized_region);
+        } else {
+            println!("No valid bounding box found for this region.");
+        }
+    }
+    stamps
 }
 
 
@@ -234,7 +298,7 @@ pub fn extract_corners_with_bounding_box(images_path: &str, threshold_type: &str
         let mut rectangles = vec![];
 
 
-         crop_stamps(&mut rectangles,image_size);
+         crop_boxes(&mut rectangles, image_size);
 
         for (idx,rect) in rectangles.iter().enumerate() {
             let stamp_roi = im.roi(*rect)?.clone_pointee();
@@ -341,4 +405,72 @@ fn calculate_statistics(values: &Vec<i32>) -> (f64, f64, f64, f64, f64) {
     };
 
     (mean, std_dev, min, max, median)
+}
+
+pub fn process_image_without_cropping(image_path: &str, threshold_type: &str) -> Result<()> {
+    println!("Processing image without cropping: {}", image_path);
+
+    // Read the image
+    let im = imgcodecs::imread(image_path, imgcodecs::IMREAD_COLOR)?;
+    if im.empty() {
+        println!("Could not read {}. Skipping...", image_path);
+        return Ok(());
+    }
+
+    let mut gray = Mat::default();
+    cvt_color(&im, &mut gray, COLOR_BGR2GRAY, 0)?;
+
+    let thresh = apply_thresholding(&gray, threshold_type, 90.0)?;
+    let processed_thresh = apply_noise_removal(&thresh)?;
+
+    let mut contours = VectorOfVectorOfPoint::new();
+    find_contours(
+        &processed_thresh,
+        &mut contours,
+        RETR_TREE,
+        CHAIN_APPROX_SIMPLE,
+        Point::new(0, 0),
+    )?;
+
+    let mut image_with_contours = im.clone();
+    imgproc::draw_contours(
+        &mut image_with_contours,
+        &contours,
+        -1,
+        Scalar::new(0.0, 255.0, 0.0, 0.0),
+        2,
+        LINE_8,
+        &Mat::default(),
+        255,
+        Point::new(0, 0),
+    )?;
+
+    let rect = draw_filtered_bounding_rectangle(&contours, &mut image_with_contours)?;
+
+    if let Some(rect) = rect {
+        println!(
+            "Bounding Box: x: {}, y: {}, width: {}, height: {}",
+            rect.x, rect.y, rect.width, rect.height
+        );
+
+        // Optionally, resize the entire image for uniformity
+        let mut resized_image = Mat::default();
+        imgproc::resize(
+            &im,
+            &mut resized_image,
+            Size::new(580, 140),
+            0.0,
+            0.0,
+            imgproc::INTER_LINEAR,
+        )?;
+
+        // Optionally, display or save the resized image
+        show_image("Processed Entire Image", &resized_image)?;
+    } else {
+        println!("No valid bounding box found in the entire image.");
+    }
+
+    show_image("Processed Entire Image with Contours", &image_with_contours)?;
+
+    Ok(())
 }

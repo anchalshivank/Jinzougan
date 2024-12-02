@@ -5,6 +5,19 @@ edition = "2021"
 
 [dependencies]
 opencv = { version = "0.93.4", features = ["video"] }
+egui = "0.29.1"
+image = "0.25.5"
 env_logger = "0.11.5"
-log = "0.4"
 dotenv = "0.15.0"
+log = "0.4.22"
+rfd = "0.15.1"
+eframe = "0.29.1"
+tokio = { version = "1.41.1", features = ["full"] }
+
+[[bin]]
+name = "classify"
+path = "src/bins/classify.rs"
+
+[[bin]]
+name = "detect"
+path = "src/bins/detect.rs"

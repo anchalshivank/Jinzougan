@@ -36,6 +36,7 @@ The Image Defect Detection System is designed to automate the process of capturi
 ## Folder Structure and Data Collection
 
 ### Folder Structure
+
 - **Root Directory**: Contains all scripts and model-related files.
 - **Dataset Directory**:
   - `dataset/`: Automatically created when enabling sample collection during defect detection.
@@ -43,26 +44,29 @@ The Image Defect Detection System is designed to automate the process of capturi
   - Each image is labeled as `good` or `bad` and saved with a unique name (e.g., `timestamp_stampX_good.jpg`).
 
 ### Data Collection Workflow
+
 1. **Camera Capture**:
    - Images are saved during defect detection based on the current timestamp.
    - Full-frame and individual stamps are saved in the dataset directory.
+
 2. **Manual Classification**:
    - Allows reclassification of images into `good` or `bad` categories.
    - Reclassified images are renamed and updated in the dataset folder.
 
 ### Data Usage for Training
 1. **Preparation**:
-   - Organize the collected dataset into `train/` and `val/` subdirectories under `./vt/`.
-   - Ensure each subdirectory contains `good` and `bad` images for respective labels.
+   - After manual classification, organize the dataset into `train/` and `val/` subdirectories under a directory such as `./vt/`.
+   - Ensure each subdirectory (`train` and `val`) contains two folders: `good` and `bad`, each with their respective images.
+
 2. **Model Training**:
-   - Run the `train.py` script to train the Vision Transformer model.
-   - Processed data undergoes transformations like resizing and normalization to fit the model’s requirements.
+   - Run the training script (`train.py`) to fine-tune the Vision Transformer model.
+   - Images undergo transformations like resizing and normalization to fit the model’s requirements.
 
 ## Key Components
 
 ### 1. CameraApp (File: `camera_app4.py`)
 
-- **Initialization**: Sets up the camera, model, and GUI for capturing and displaying live camera feed.
+- **Initialization**: Sets up the camera, model, and GUI for capturing and displaying the live camera feed.
 - **Key Methods**:
   - `start_camera()`: Starts the camera and initializes real-time feed.
   - `update_frame()`: Continuously updates the feed on the GUI canvas.
@@ -70,7 +74,7 @@ The Image Defect Detection System is designed to automate the process of capturi
   - `crop_stamps(image_size)`: Defines the cropping dimensions for the six stamps based on predefined offsets and dimensions.
 - **Dependencies**: `dvp` library for camera control, `torch` and `transformers` for model inference, `tkinter` for GUI.
 
-#### Explanation of Code Snippet: Cropping Logic
+#### Example: Cropping Logic
 
 ```python
 for col in range(1, 4):
@@ -83,32 +87,177 @@ for col in range(1, 4):
     rectangles.append(rect)
 ```
 
-- **Purpose**: Dynamically calculates the coordinates for cropping regions (stamps) from the left side of the image.
-- **Logic**:
-  - The horizontal coordinate `x` is adjusted by subtracting the product of column index and `STAMP_WIDTH` along with a `LEFT_OFFSET`.
-  - The vertical coordinate `y` is set to 0 as the stamps are horizontally aligned.
-  - The width and height are determined using predefined constants (`STAMP_WIDTH`, `STAMP_HEIGHT`).
-  - Similar logic is applied to crop stamps on the right side, adjusted with a `RIGHT_OFFSET`.
+- Dynamically calculates coordinates to crop stamps from the left side of the image. Similar logic is applied for the right side using `RIGHT_OFFSET`.
 
 ### 2. ManualClassifier (File: `manual_classifier.py`)
 
-- **Purpose**: Provides a GUI for users to manually classify images.
-- **Key Features**:
+- **Purpose**: GUI interface for manual classification.
+- **Features**:
   - Load images from a folder.
-  - Display six images at a time with current classification.
-  - Toggle classification and commit changes (renames files based on new labels).
-  - Navigation for viewing more images.
+  - Display six images at a time with their current classification.
+  - Toggle classification and commit changes (renaming files accordingly).
+  - Navigate through multiple sets of images.
 
-### 3. Training Script (File: `train.py`)
+### 3. Model Training, Validation, and Testing (File: `train.py`)
 
-- **Purpose**: Trains the Vision Transformer model on labeled data.
-- **Workflow**:
-  - Loads image datasets for training and validation.
-  - Applies necessary transformations (resize, normalize).
-  - Uses `torch` for training the ViT model with a cross-entropy loss.
-  - Saves the trained model and feature extractor for deployment.
+**Purpose**: To train, validate, and test the ViT model on your labeled data.
 
-### Explanation of Code Snippet: Model Inference
+**Before Training**:
+- Prepare your dataset:  
+  - After using the `ManualClassifier`, separate your images into `good` and `bad` folders.
+  - Organize them as:
+    ```
+    vt/
+      train/
+        good/
+          image1_good.jpg
+          ...
+        bad/
+          image2_bad.jpg
+          ...
+      val/
+        good/
+          val_image1_good.jpg
+          ...
+        bad/
+          val_image2_bad.jpg
+          ...
+    ```
+    (Optionally, create a `test` directory with the same structure for final evaluation.)
+
+**Training Script Overview**:
+- Loads the pre-trained ViT model (`google/vit-base-patch16-224-in21k`) and customizes the output layer based on the number of classes.
+- Applies data transformations (resize, normalize).
+- Trains for a specified number of epochs, computing training loss and validating on the validation set after each epoch.
+
+**Validation**:
+- Conducted after each training epoch.
+- Evaluates model performance on the validation set, reporting validation loss and accuracy.
+- Useful for early stopping or hyperparameter tuning.
+
+**Testing**:
+- Conducted after training completion on the test set (if provided).
+- Provides a final measure of model performance on unseen data.
+
+**Code Example**:
+
+```python
+import os
+import torch
+from torch import nn
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+from transformers import ViTForImageClassification, ViTFeatureExtractor
+from torch.optim import AdamW
+from tqdm import tqdm
+
+# Paths (adjust as necessary)
+train_dir = './vt/train'
+val_dir = './vt/val'
+test_dir = './vt/test'  # Include this if you have a test set
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+feature_extractor = ViTFeatureExtractor.from_pretrained('google/vit-base-patch16-224-in21k')
+
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=feature_extractor.image_mean, std=feature_extractor.image_std),
+])
+
+train_dataset = datasets.ImageFolder(root=train_dir, transform=transform)
+val_dataset = datasets.ImageFolder(root=val_dir, transform=transform)
+test_dataset = datasets.ImageFolder(root=test_dir, transform=transform)  # if test set is available
+
+train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)  # if test set is available
+
+model = ViTForImageClassification.from_pretrained(
+    'google/vit-base-patch16-224-in21k',
+    num_labels=len(train_dataset.classes)
+)
+model.to(device)
+
+optimizer = AdamW(model.parameters(), lr=5e-5)
+criterion = nn.CrossEntropyLoss()
+num_epochs = 5
+
+def train_model():
+    model.train()
+    for epoch in range(num_epochs):
+        running_loss = 0.0
+        print(f"Epoch {epoch + 1}/{num_epochs}")
+        for images, labels in tqdm(train_loader):
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images).logits
+            loss = criterion(outputs, labels)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+
+        avg_loss = running_loss / len(train_loader)
+        print(f"Training Loss: {avg_loss:.4f}")
+        validate_model()
+
+def validate_model():
+    model.eval()
+    correct = 0
+    total = 0
+    running_loss = 0.0
+
+    with torch.no_grad():
+        for images, labels in val_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images).logits
+            loss = criterion(outputs, labels)
+            running_loss += loss.item()
+            _, predicted = torch.max(outputs, dim=1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    avg_loss = running_loss / len(val_loader)
+    accuracy = 100.0 * correct / total
+    print(f'Validation Loss: {avg_loss:.4f}, Validation Accuracy: {accuracy:.2f}%')
+    model.train()
+
+def test_model():
+    model.eval()
+    correct = 0
+    total = 0
+    running_loss = 0.0
+
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images).logits
+            loss = criterion(outputs, labels)
+            running_loss += loss.item()
+            _, predicted = torch.max(outputs, dim=1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    avg_loss = running_loss / len(test_loader)
+    accuracy = 100.0 * correct / total
+    print(f'Test Loss: {avg_loss:.4f}, Test Accuracy: {accuracy:.2f}%')
+    model.train()
+
+# Run training and validation
+train_model()
+
+# After training completes, optionally test if a test set is provided
+test_model()
+
+# Save the model and feature extractor
+model.save_pretrained('./vit_model')
+feature_extractor.save_pretrained('./vit_model')
+print("Model training, validation, and testing complete. Model saved to ./vit_model.")
+```
+
+### Explanation: Model Inference Example
 
 ```python
 inputs = self.feature_extractor(images=stamp_image, return_tensors="pt")
@@ -117,40 +266,16 @@ outputs = self.model(**inputs).logits
 predicted_class = outputs.argmax(-1).item()
 ```
 
-- **Purpose**: Processes a single stamp to classify it as `good` or `bad`.
-- **Steps**:
-  1. **Feature Extraction**: Converts the image into a tensor compatible with the Vision Transformer model.
-  2. **Inference**: Passes the tensor through the model to obtain logits (unnormalized predictions).
-  3. **Classification**: The `argmax` function identifies the class with the highest probability.
-  4. **Mapping**: The numeric class is mapped to labels (`good`/`bad`).
+- Converts the image into a tensor.
+- Performs inference on the ViT model.
+- Chooses the class with the highest probability as the final prediction.
 
 ### 4. Navigation and GUI Workflow (File: `navigation.py`)
 
-- **Purpose**: Provides a menu-based navigation system for the GUI and handles interactions between different application modules.
-
-#### Workflow Logic:
-1. **Main Menu**:
-   - Displayed upon launching the application (`main_menu()` function).
-   - Options to:
-     - Start the defect detection interface.
-     - Open the manual classification interface.
-     - Exit the application.
-2. **Switching Views**:
-   - When a button is clicked, the corresponding interface (`CameraApp` or `ManualClassifier`) replaces the current GUI.
-   - Widgets and frames of the current view are destroyed before transitioning to the new view.
-3. **Defect Detection**:
-   - Initiated when "Start Defect Detection" is selected.
-   - Launches `CameraApp` to handle camera feed, image processing, and real-time defect detection.
-4. **Manual Classification**:
-   - Triggered when "Manual Classification" is selected.
-   - Loads the `ManualClassifier` interface for reviewing and classifying images manually.
-5. **Back Navigation**:
-   - Provides a "Back" button in each interface to return to the main menu without restarting the application.
-
-- **Key Features**:
-  - Intuitive menu-based navigation.
-  - Seamless transitions between views.
-  - Unified control flow ensuring smooth user experience.
+- **Purpose**: Provides a menu-based navigation system for the GUI and handles transitions between `CameraApp` and `ManualClassifier`.
+- **Features**:
+  - Main menu for starting defect detection or opening manual classification.
+  - Back button for returning to the main menu.
 
 ## Usage
 
@@ -164,17 +289,18 @@ predicted_class = outputs.argmax(-1).item()
 
 ### Training the Model
 
-1. Prepare datasets with labeled images.
-2. Place training and validation data in `./vt/train` and `./vt/val`, respectively.
-3. Run the `train.py` script to fine-tune the model.
+1. Prepare datasets with labeled images (`good` and `bad`).
+2. Organize them under `./vt/train` and `./vt/val` (and optionally `./vt/test`).
+3. Run `train.py` to train the ViT model. Validation and testing steps are included.
 
 ## Future Improvements
 
-- Enhance cropping logic to dynamically synchronize with the alignment of the machine and camera, ensuring accurate stamp extraction even if the alignment changes.
-- Integrate real-time performance metrics and alerts.
-- Refine the manual classifier for better usability.
+- Enhance cropping logic to dynamically adapt to machine alignment changes.
+- Add real-time performance metrics and alerts.
+- Improve manual classification tool usability and feature set.
 
 ## Conclusion
 
-This documentation provides a comprehensive overview of the Image Defect Detection System, detailing its components, logic, and usage. The system combines image processing, machine learning, and GUI-based workflows to deliver an efficient quality control solution.
+This documentation provides a comprehensive overview of the Image Defect Detection System and its components. It outlines the process from image acquisition to automated and manual classification, and details how to train, validate, and test a Vision Transformer model for high-accuracy image defect detection in industrial quality control scenarios.
 
+---
